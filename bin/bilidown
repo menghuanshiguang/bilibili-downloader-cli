@@ -14,6 +14,7 @@
 #   parts <URL|BV号>      查询分P列表 (alias: p)
 #   find <URL|BV号> <词>  按关键词定位合集分P (alias: findpart, f)
 #   preview <URL|BV号>    生成预览页(封面+播放) (alias: v)
+#   space <UID|空间URL>   获取UP主主页视频列表 (alias: sp)
 #   help|-h               帮助
 #   version|-v            版本
 #
@@ -102,6 +103,10 @@ case "$CMD" in
     preview|v)
         shift
         run_lib bilibili-preview.sh "$@"
+        ;;
+    space|sp)
+        shift
+        run_lib bilibili-space.sh "$@"
         ;;
     help|-h|--help)
         usage

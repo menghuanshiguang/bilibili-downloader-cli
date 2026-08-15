@@ -16,6 +16,10 @@
 #   bilibili-findpart.sh "https://b23.tv/iEGonVr" "九百九十九朵玫瑰"
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 INPUT="${1:-}"
 KEYWORD="${2:-}"
@@ -58,7 +62,7 @@ RESP="$(curl -sG "https://api.bilibili.com/x/player/pagelist" \
     -H "Referer: https://www.bilibili.com/" \
     -b "$CK" || true)"
 
-echo "$RESP" | python3 -c "
+echo "$RESP" | "$PYBIN" -c "
 import json, sys
 try:
     d = json.load(sys.stdin)

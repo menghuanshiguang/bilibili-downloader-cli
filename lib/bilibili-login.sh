@@ -14,6 +14,10 @@
 #   4. 轮询登录状态, 成功后保存 cookies
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 HOME_DIR="${HOME:-/root}"
@@ -31,14 +35,14 @@ echo ">>> 获取登录二维码..."
 GEN=$(curl -s "https://passport.bilibili.com/x/passport-login/web/qrcode/generate" \
     -A "$UA" -e "https://www.bilibili.com/" -H "Referer:https://www.bilibili.com/")
 
-QRC_KEY=$(echo "$GEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['qrcode_key'])" 2>/dev/null)
-QR_URL=$(echo "$GEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['url'])" 2>/dev/null)
+QRC_KEY=$(echo "$GEN" | "$PYBIN" -c "import sys,json; print(json.load(sys.stdin)['data']['qrcode_key'])" 2>/dev/null)
+QR_URL=$(echo "$GEN" | "$PYBIN" -c "import sys,json; print(json.load(sys.stdin)['data']['url'])" 2>/dev/null)
 [[ -z "$QRC_KEY" ]] && { echo "❌ 获取二维码失败"; exit 1; }
 
 # ---------- 2. 生成二维码 HTML (用官方 data.url, 确保扫码可识别) ----------
 echo ">>> 生成二维码页面: $QR_HTML"
 
-python3 - "$QR_URL" "$QR_HTML" <<'EOF'
+"$PYBIN" - "$QR_URL" "$QR_HTML" <<'EOF'
 import qrcode, io, base64, sys
 url = sys.argv[1]   # 官方 data.url, 保证扫码可识别
 img = qrcode.make(url)
@@ -90,7 +94,7 @@ for i in $(seq 1 24); do
         --data-urlencode "qrcode_key=$QRC_KEY" \
         "$POLL_URL")
     
-    CODE=$(echo "$RES" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('code'))" 2>/dev/null || echo "-1")
+    CODE=$(echo "$RES" | "$PYBIN" -c "import sys,json; d=json.load(sys.stdin); print(d['data'].get('code'))" 2>/dev/null || echo "-1")
     case "$CODE" in
         0)   echo ">>> ✅ 扫码确认！正在获取登录态..."; break ;;
         86038) echo ">>> 二维码已失效，请重新运行登录脚本" >&2; exit 1 ;;
@@ -102,7 +106,7 @@ done
 # ---------- 4. 通过 crossDomain 获取 SESSDATA 并保存 cookies ----------
 if [[ "$CODE" == "0" ]]; then
     echo ">>> 完成扫码确认，跳转兑换 cookies..."
-    CROSS_URL=$(echo "$RES" | python3 -c "
+    CROSS_URL=$(echo "$RES" | "$PYBIN" -c "
 import sys,json
 try:
     d=json.load(sys.stdin)

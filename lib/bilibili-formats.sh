@@ -15,6 +15,10 @@
 #   bilibili-formats.sh "BV16v411L7js?p=121"   # 查询合集第121P
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 INPUT="${1:-}"
 [[ -z "$INPUT" ]] && { echo "用法: bilibili-formats.sh \"<URL|BV号>[?p=N]\"" >&2; exit 1; }
@@ -54,7 +58,7 @@ RESP="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
     --data-urlencode "bvid=$BV" \
     -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$CK" || true)"
 
-CID="$(echo "$RESP" | python3 -c "
+CID="$(echo "$RESP" | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception:
@@ -77,7 +81,7 @@ PU="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/playurl" \
     --data-urlencode "fourk=1" \
     -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$CK" || true)"
 
-echo "$PU" | python3 -c "
+echo "$PU" | "$PYBIN" -c "
 import json, sys
 try: d = json.load(sys.stdin)
 except Exception:

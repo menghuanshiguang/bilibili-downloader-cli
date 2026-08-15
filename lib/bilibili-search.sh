@@ -10,6 +10,10 @@
 #   bilibili-search.sh "Beyond 岁月无声" 5
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 KEYWORD="${1:-}"
 COUNT="${2:-10}"
@@ -46,7 +50,7 @@ RESP="$(curl -sG "https://api.bilibili.com/x/web-interface/search/type" \
     -H "Origin: https://search.bilibili.com" \
     -b "$CK")"
 
-echo "$RESP" | python3 -c "
+echo "$RESP" | "$PYBIN" -c "
 import json, sys, re
 try:
     d = json.load(sys.stdin)

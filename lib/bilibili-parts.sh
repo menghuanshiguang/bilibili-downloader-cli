@@ -13,6 +13,10 @@
 #   bilibili-parts.sh "BV16v411L7js?p=353"
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 INPUT="${1:-}"
 [[ -z "$INPUT" ]] && { echo "用法: bilibili-parts.sh \"<URL|BV号>\"" >&2; exit 1; }
@@ -50,7 +54,7 @@ RESP="$(curl -sG "https://api.bilibili.com/x/player/pagelist" \
     -H "Referer: https://www.bilibili.com/" \
     -b "$CK" || true)"
 
-echo "$RESP" | python3 -c "
+echo "$RESP" | "$PYBIN" -c "
 import json, sys
 try:
     d = json.load(sys.stdin)

@@ -17,12 +17,14 @@ bilidown dl "BVxxx" audio ~/out mp4 480 1 "1:30-2:45"   # 截取片段
 | **iSH (iOS)** | ✅ | 原生开发环境 |
 | **Alpine / Debian / Ubuntu / macOS** | ✅ | 原生支持 |
 | **Android (Termux)** | ✅ | `pkg install bash ffmpeg python curl` + `pip install yt-dlp` |
-| **Windows + WSL** | ✅ | 推荐，`apt install` 装依赖 |
-| **Windows + Git Bash / MSYS2** | ✅ | 依赖进 PATH |
+| **Windows + Git Bash** | ✅ | 见下方「Windows 安装」 |
+| **Windows + WSL** | ✅ | `apt install` 装依赖后同 Linux 用法 |
 
-> 依赖：`bash`、`yt-dlp`、`curl`、`python3`、`ffmpeg`、`ffprobe`
+> 依赖：`bash`、`yt-dlp`、`curl`、`python3`(Windows 无 python3 时自动回退 `python`)、`ffmpeg`、`ffprobe`
 
 ## 🚀 安装
+
+### Linux / macOS / WSL / iSH
 
 ```bash
 git clone https://github.com/menghuanshiguang/bilibili-downloader-cli.git
@@ -30,6 +32,23 @@ cd bilibili-downloader-cli
 bash install.sh          # 软链到 /usr/local/bin/bilidown
 bilidown --version       # 验证
 ```
+
+### Windows (Git Bash)
+
+1. 安装 [Git for Windows](https://git-scm.com/download/win)(自带 bash),以及 `yt-dlp`(`pip install -U yt-dlp`)、`ffmpeg`(`winget install Gyan.FFmpeg`,含 ffprobe)。
+2. 推荐一键安装(自动把 `bin/` 加入用户 PATH,并提供 `bilidown.cmd` 入口,cmd/PowerShell 都能直接用):
+
+```powershell
+git clone https://github.com/menghuanshiguang/bilibili-downloader-cli.git
+cd bilibili-downloader-cli
+powershell -ExecutionPolicy Bypass -File install.ps1
+# 新开一个终端:
+bilidown --version
+```
+
+   或手动:`bash install.sh`(Git Bash 内生成 wrapper 到 `~/bin`),再把 `~/bin` 加入 PATH。
+
+> Windows 注意:只有 `python` 没有 `python3` 时脚本自动回退,无需配置;缺失 ffmpeg 时给出安装指引而不是静默失败。
 
 ## 📖 子命令
 

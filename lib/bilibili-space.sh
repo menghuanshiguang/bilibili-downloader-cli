@@ -11,6 +11,10 @@
 #   bilibili-space.sh "https://b23.tv/xxx" 10
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 INPUT="${1:-}"
 COUNT="${2:-10}"
@@ -50,7 +54,7 @@ fi
 echo ">>> UID: $UID_ARG" >&2
 
 # ---------- wbi 签名 + 拉取列表 ----------
-python3 - "$UID_ARG" "$COUNT" "$CK" << 'PYEOF'
+"$PYBIN" - "$UID_ARG" "$COUNT" "$CK" << 'PYEOF'
 import sys, urllib.request, urllib.parse, json, hashlib, time, os
 
 uid, count, ckfile = sys.argv[1], int(sys.argv[2]), sys.argv[3]

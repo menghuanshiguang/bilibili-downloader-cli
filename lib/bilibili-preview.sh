@@ -10,6 +10,10 @@
 #   bilibili-preview.sh "BV16v411L7js?p=121"
 # =====================================================================
 set -euo pipefail
+# Windows(Git Bash) 适配: python3 缺失时自动回退 python
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+
 
 INPUT="${1:-}"
 [[ -z "$INPUT" ]] && { echo "用法: bilibili-preview.sh \"<URL|BV号>[?p=N]\"" >&2; exit 1; }
@@ -47,7 +51,7 @@ fi
 VIEW="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/web-interface/view" \
     --data-urlencode "bvid=$BV" \
     -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$CK" || true)"
-read -r PIC TITLE <<< "$(echo "$VIEW" | python3 -c "
+read -r PIC TITLE <<< "$(echo "$VIEW" | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -63,7 +67,7 @@ PARTS_HTML=""
 RESP="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
     --data-urlencode "bvid=$BV" \
     -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$CK" || true)"
-read -r PART_COUNT <<< "$(echo "$RESP" | python3 -c "
+read -r PART_COUNT <<< "$(echo "$RESP" | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -71,7 +75,7 @@ pages=d.get('data') or []
 print(len(pages))
 " 2>/dev/null || echo 1)"
 if [[ "$PART_COUNT" -gt 1 ]]; then
-    PARTS_HTML="$(echo "$RESP" | python3 -c "
+    PARTS_HTML="$(echo "$RESP" | "$PYBIN" -c "
 import json,sys,html
 d=json.load(sys.stdin)
 pages=d.get('data') or []
@@ -87,7 +91,7 @@ fi
 mkdir -p "$OUTBASE"
 OUTFILE="$OUTBASE/${BV}_p${P_NUM}.html"
 PLAYER="https://www.bilibili.com/blackboard/webplayer/mbplayer.html?bvid=${BV}&p=${P_NUM}"
-TITLE_ESC="$(echo "$TITLE" | python3 -c "import sys,html;print(html.escape(sys.stdin.read().strip()))" 2>/dev/null || echo "$TITLE")"
+TITLE_ESC="$(echo "$TITLE" | "$PYBIN" -c "import sys,html;print(html.escape(sys.stdin.read().strip()))" 2>/dev/null || echo "$TITLE")"
 
 cat > "$OUTFILE" <<HTMLEOF
 <!DOCTYPE html>

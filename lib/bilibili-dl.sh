@@ -21,9 +21,12 @@ set -euo pipefail
 
 # ---------- 配置 ----------
 WORK="${HOME:-/root}/B站音频下载"
-YTDLP="$(command -v yt-dlp)"
-FFMPEG="$(command -v ffmpeg)"
-FFPROBE="$(command -v ffprobe)"
+# 工具链探测: Windows(Git Bash) 通常只有 python 没有 python3, 自动回退
+PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${PYBIN:-python3}"
+YTDLP="$(command -v yt-dlp || true)"
+FFMPEG="$(command -v ffmpeg || true)"
+FFPROBE="$(command -v ffprobe || true)"
 BUFILE="${HOME:-/root}/.cache/bilibili-buvid.txt"
 LOGINFILE="${HOME:-/root}/.cache/bilibili-login-cookies.txt"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -107,9 +110,21 @@ download_all_parts() {
 }
 
 # ---------- 用 ffprobe 读流属性 ----------
+# Windows(Git Bash) 兼容: ffmpeg/ffprobe 是原生 Windows 程序,
+# 含空格/方括号([0s-10s] 截取名)的 POSIX 路径(/c/...) 会被 msys 拒绝转换导致打不开,
+# 统一转成 Windows 风格 (C:/...) 再传入; 非 Windows 环境原样返回。
+winpath() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        echo "$1"
+    fi
+}
 probe() {  # probe <file> <stream> <field>
+    local f
+    f="$(winpath "$1")"
     "$FFPROBE" -v error -select_streams "$2" -show_entries "stream=$3" \
-        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | head -1 || true
+        -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null | head -1 || true
 }
 
 # ---------- 视频+音频下载并合并 (API直链方案, 绕开 yt-dlp 合集遍历卡死) ----------
@@ -127,7 +142,7 @@ download_video() {
     # 1. pagelist: 拿 cid + 标题
     resp="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
         --data-urlencode "bvid=$bv" -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" || true)"
-    cid="$(echo "$resp" | python3 -c "
+    cid="$(echo "$resp" | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -136,7 +151,7 @@ t=[p for p in pages if p.get('page')==int('$pnum')]
 print(t[0]['cid'] if t else '')
 " 2>/dev/null || true)"
     [[ -z "$cid" ]] && { echo "ERROR: 获取cid失败(风控或P$pnum不存在)" >&2; return 1; }
-    title="$(echo "$resp" | python3 -c "
+    title="$(echo "$resp" | "$PYBIN" -c "
 import json,sys
 d=json.load(sys.stdin)
 pages=d.get('data') or []
@@ -151,7 +166,7 @@ print(t[0]['part'] if t else 'P$pnum')
         --data-urlencode "bvid=$bv" --data-urlencode "cid=$cid" \
         --data-urlencode "qn=80" --data-urlencode "fnval=16" --data-urlencode "fourk=1" \
         -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" \
-        | python3 -c "
+        | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -193,6 +208,10 @@ print(auds[0]['baseUrl'])
         out="${out%.${container}}_[${cut_start}s-$((${cut_start}+${cut_dur}))s].${container}"
     fi
 
+    # Windows 兼容: ffmpeg 是原生程序, 文件路径统一转 Windows 风格
+    local wv wa wo
+    wv="$(winpath "$vfile")"; wa="$(winpath "$afile")"; wo="$(winpath "$out")"
+
     echo ">>> 合并 → $(basename "$out")"
     echo "    视频: $(basename "$vfile") ($(du -h "$vfile"|cut -f1))"
     echo "    音频: $(basename "$afile") ($(du -h "$afile"|cut -f1))"
@@ -213,14 +232,14 @@ print(auds[0]['baseUrl'])
 
     case "$container" in
         mkv)
-            "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT -c copy "$out" 2>&1 | tail -3
+            "$FFMPEG" -y $CUT1 -i "$wv" $CUT2 -i "$wa" $CUTOUT -c copy "$wo" 2>&1 | tail -3
             ;;
         *)
             if [[ "$vcodec" == h264 || "$vcodec" == *avc* ]]; then
-                "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
+                "$FFMPEG" -y $CUT1 -i "$wv" $CUT2 -i "$wa" $CUTOUT \
                     -map 0:v:0 -map 1:a:0 \
                     -c:v copy -c:a copy -movflags +faststart \
-                    "$out" 2>&1 | tail -3
+                    "$wo" 2>&1 | tail -3
             else
                 local H264_ENC="" ENCODERS
                 ENCODERS="$("$FFMPEG" -hide_banner -encoders 2>/dev/null)"
@@ -232,19 +251,19 @@ print(auds[0]['baseUrl'])
                 if [[ -n "$H264_ENC" ]]; then
                     echo "    ⚠️ 视频流是 ${vcodec}, 尝试用 ${H264_ENC} 转码为 H.264..."
                     if [[ "$H264_ENC" == "libx264" ]]; then
-                        "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
+                        "$FFMPEG" -y $CUT1 -i "$wv" $CUT2 -i "$wa" $CUTOUT \
                             -map 0:v:0 -map 1:a:0 \
                             -c:v libx264 -preset fast -crf 26 -maxrate 1200k -bufsize 2400k \
-                            -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
+                            -c:a aac -b:a 96k -movflags +faststart "$wo" 2>&1 | tail -3
                     else
-                        "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
+                        "$FFMPEG" -y $CUT1 -i "$wv" $CUT2 -i "$wa" $CUTOUT \
                             -map 0:v:0 -map 1:a:0 \
                             -c:v h264_videotoolbox -b:v 1200k \
-                            -c:a aac -b:a 96k -movflags +faststart "$out" 2>&1 | tail -3
+                            -c:a aac -b:a 96k -movflags +faststart "$wo" 2>&1 | tail -3
                     fi
                     # 验证转码结果: 必须同时有视频+音频流, 否则回退
                     local has_video
-                    has_video="$("$FFMPEG" -i "$out" 2>&1 | grep -c 'Video:' || true)"
+                    has_video="$("$FFMPEG" -i "$wo" 2>&1 | grep -c 'Video:' || true)"
                     if [[ "$has_video" -eq 0 || ! -s "$out" ]]; then
                         echo "    ⚠️ ${H264_ENC} 转码失败(解码器不支持${vcodec}), 尝试重新下载 avc(H.264) 视频流..."
                         rm -f "$out"
@@ -253,7 +272,7 @@ print(auds[0]['baseUrl'])
                             --data-urlencode "bvid=$bv" --data-urlencode "cid=$cid" \
                             --data-urlencode "qn=80" --data-urlencode "fnval=16" --data-urlencode "fourk=1" \
                             -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" \
-                            | python3 -c "
+                            | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -271,23 +290,23 @@ print(auds[0]['baseUrl'])
                         vfile2="$outdir/.video_tmp_${pnum}_avc.m4s"
                         if [[ -n "$vurl2" ]] && timeout 180 curl -s --max-time 170 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$vfile2" "$vurl2" 2>/dev/null && [[ -s "$vfile2" ]]; then
                             echo "    ✅ 拿到 avc 流, 直接合并 (免转码)..."
-                            "$FFMPEG" -y $CUT1 -i "$vfile2" $CUT2 -i "$afile" $CUTOUT \
+                            "$FFMPEG" -y $CUT1 -i "$(winpath "$vfile2")" $CUT2 -i "$wa" $CUTOUT \
                                 -map 0:v:0 -map 1:a:0 \
-                                -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
+                                -c:v copy -c:a copy -movflags +faststart "$wo" 2>&1 | tail -3
                             rm -f "$vfile2"
                         else
                             echo "    ⚠️ 无 avc 流可用, 回退原样复制 ${vcodec} 流。"
-                            "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
+                            "$FFMPEG" -y $CUT1 -i "$wv" $CUT2 -i "$wa" $CUTOUT \
                                 -map 0:v:0 -map 1:a:0 \
-                                -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
+                                -c:v copy -c:a copy -movflags +faststart "$wo" 2>&1 | tail -3
                             echo "    ⚠️ 结果是 ${vcodec} 编码, 需现代播放器(VLC/mpv)或装完整ffmpeg转H264。" >&2
                         fi
                     fi
                 else
                     echo "    ⚠️ 无 H264 编码器, 原样复制 ${vcodec} 流。请装完整 ffmpeg。" >&2
-                    "$FFMPEG" -y $CUT1 -i "$vfile" $CUT2 -i "$afile" $CUTOUT \
+                    "$FFMPEG" -y $CUT1 -i "$wv" $CUT2 -i "$wa" $CUTOUT \
                         -map 0:v:0 -map 1:a:0 \
-                        -c:v copy -c:a copy -movflags +faststart "$out" 2>&1 | tail -3
+                        -c:v copy -c:a copy -movflags +faststart "$wo" 2>&1 | tail -3
                 fi
             fi
             ;;
@@ -319,7 +338,7 @@ download_audio() {
     # 1. pagelist: 拿 cid + 标题
     resp="$(curl -s --max-time 15 -G "https://api.bilibili.com/x/player/pagelist" \
         --data-urlencode "bvid=$bv" -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" || true)"
-    cid="$(echo "$resp" | python3 -c "
+    cid="$(echo "$resp" | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -328,7 +347,7 @@ t=[p for p in pages if p.get('page')==int('$pnum')]
 print(t[0]['cid'] if t else '')
 " 2>/dev/null || true)"
     [[ -z "$cid" ]] && { echo "ERROR: 获取cid失败(风控或P$pnum不存在)" >&2; return 1; }
-    title="$(echo "$resp" | python3 -c "
+    title="$(echo "$resp" | "$PYBIN" -c "
 import json,sys
 d=json.load(sys.stdin)
 pages=d.get('data') or []
@@ -342,7 +361,7 @@ print(t[0]['part'] if t else 'P$pnum')
         --data-urlencode "bvid=$bv" --data-urlencode "cid=$cid" \
         --data-urlencode "qn=16" --data-urlencode "fnval=16" \
         -H "User-Agent: $UA" -H "Referer: https://www.bilibili.com/" -b "$ck" \
-        | python3 -c "
+        | "$PYBIN" -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(2)
@@ -363,13 +382,16 @@ print(a[0]['baseUrl'] if a else '')
     if ! timeout 90 curl -s --max-time 80 -e "https://www.bilibili.com/" -H "User-Agent: $UA" -o "$afile" "$aurl"; then
         echo "ERROR: 音频流下载失败" >&2; rm -f "$afile"; return 1
     fi
+    # Windows 兼容: ffmpeg 是原生程序, 文件路径统一转 Windows 风格
+    local wa wo
+    wa="$(winpath "$afile")"; wo="$(winpath "$out")"
     if [[ -n "$cut_start" && -n "$cut_dur" ]]; then
         echo ">>> 截取片段: ${cut_start}s 起, 时长 ${cut_dur}s..."
-        if ! timeout 90 "$FFMPEG" -y -ss "$cut_start" -i "$afile" -t "$cut_dur" -c copy -movflags +faststart "$out" >/dev/null 2>&1; then
+        if ! timeout 90 "$FFMPEG" -y -ss "$cut_start" -i "$wa" -t "$cut_dur" -c copy -movflags +faststart "$wo" >/dev/null 2>&1; then
             echo "ERROR: 音频截取失败" >&2; rm -f "$afile"; return 1
         fi
     else
-        if ! timeout 90 "$FFMPEG" -y -i "$afile" -c copy -movflags +faststart "$out" >/dev/null 2>&1; then
+        if ! timeout 90 "$FFMPEG" -y -i "$wa" -c copy -movflags +faststart "$wo" >/dev/null 2>&1; then
             echo "ERROR: 音频转 m4a 失败" >&2; rm -f "$afile"; return 1
         fi
     fi
@@ -461,6 +483,23 @@ fi
 
 URL="$(normalize_url "$INPUT")"
 CK="$(get_cookies)"
+
+# ---------- 工具链检查: 缺失时给出明确指引, 而不是 set -e 直接崩 ----------
+[[ -n "$YTDLP" ]] || {
+    echo "ERROR: 未找到 yt-dlp, 请先安装: pip install -U yt-dlp (或 apk add yt-dlp / brew install yt-dlp)" >&2
+    exit 1
+}
+case "$MODE" in
+    audio|a|video|v)
+        if [[ -z "$FFMPEG" || -z "$FFPROBE" ]]; then
+            echo "ERROR: 未找到 ffmpeg/ffprobe, ${MODE} 模式需要它们。请先安装:" >&2
+            echo "  Windows: winget install Gyan.FFmpeg   或   pip install static-ffmpeg (自动提供 ffmpeg/ffprobe)" >&2
+            echo "  macOS  : brew install ffmpeg" >&2
+            echo "  Linux  : apt install ffmpeg 或 apk add ffmpeg" >&2
+            exit 1
+        fi
+        ;;
+esac
 
 # 默认目录下按 BV 号建子文件夹, 避免混文件
 BV_ID="$(echo "$URL" | grep -oE 'BV[0-9A-Za-z]{10}' | head -1 || true)"

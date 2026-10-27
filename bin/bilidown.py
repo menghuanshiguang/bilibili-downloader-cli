@@ -705,6 +705,42 @@ def run_ffmpeg(args, timeout=600):
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout).returncode
 
 
+def exc_brief(e):
+    """单行异常描述(含 HTTP 状态码等细节), 用于错误日志"""
+    return " ".join(f"{type(e).__name__}: {e}".split())
+
+
+def stream_urls(entry):
+    """一条 dash 流的全部直链: baseUrl 优先, backupUrl 为备用 CDN"""
+    urls = [entry.get("baseUrl") or entry.get("base_url") or ""]
+    urls += list(entry.get("backupUrl") or entry.get("backup_url") or [])
+    return [u for u in urls if u]
+
+
+def download_stream(entry, dest, label):
+    """按 baseUrl → backupUrl 顺序下载, 返回字节数。
+
+    B站直链会下发 mcdn/edge P2P 节点, 部分网络(如 GitHub Actions 机房)
+    连不上该节点; 同一条流的 backupUrl 是其它 CDN 上的同一份数据,
+    逐个回退即可, 无需改分辨率。全部失败时抛出带尝试记录的异常。
+    """
+    tried = []
+    for url in stream_urls(entry):
+        host = url.split("://", 1)[-1].split("/", 1)[0]
+        try:
+            n = download_to(url, dest)
+        except Exception as e:
+            tried.append(f"{host} -> {exc_brief(e)}")
+            log(f">>> ⚠️ {label} 直链失败: {host} ({exc_brief(e)}), 尝试备用源...")
+            continue
+        if tried:
+            log(f">>> {label} 备用源可用: {host} ({n / 1048576:.1f}M)")
+        return n
+    if not tried:
+        raise RuntimeError(f"{label}: API 未返回任何直链")
+    raise RuntimeError(f"{label} 全部 {len(tried)} 个直链失败: " + " | ".join(tried))
+
+
 def download_audio(bv, pnum, outdir, ck, cut=None, title_override=None):
     ffmpeg, ffprobe = check_ffmpeg()
     cid, title = get_page_info(bv, pnum, ck)
@@ -715,8 +751,6 @@ def download_audio(bv, pnum, outdir, ck, cut=None, title_override=None):
     auds = ((d.get("data") or {}).get("dash") or {}).get("audio") or []
     if not auds:
         sys.exit("ERROR: 获取音频直链失败")
-    aurl = auds[0]["baseUrl"]
-
     out = os.path.join(outdir, f"{title}.m4a")
     if pnum:
         out = os.path.join(outdir, f"P{pnum}_{title}.m4a")
@@ -726,10 +760,10 @@ def download_audio(bv, pnum, outdir, ck, cut=None, title_override=None):
 
     print(f">>> 下载音频 {('P'+str(pnum)) if pnum else ''}(API直链)...")
     try:
-        download_to(aurl, afile)
-    except Exception:
+        download_stream(auds[0], afile, "音频流")
+    except Exception as e:
         os.remove(afile) if os.path.exists(afile) else None
-        sys.exit("ERROR: 音频流下载失败")
+        sys.exit(f"ERROR: 音频流下载失败 ({exc_brief(e)})")
     if cut:
         print(f">>> 截取片段: {cut[0]}s 起, 时长 {cut[1]}s...")
         rc = run_ffmpeg([ffmpeg, "-y", "-ss", str(cut[0]), "-i", afile, "-t", str(cut[1]),
@@ -761,25 +795,25 @@ def download_video(bv, pnum, outdir, ck, container="mp4", max_res=480, cut=None,
     if not vids or not auds:
         sys.exit("ERROR: 获取视频/音频直链失败(可能需登录或付费)")
     v = pick_stream(vids, max_res)
-    aurl = auds[0]["baseUrl"]
-    vurl = v["baseUrl"]
+    if not v:
+        sys.exit("ERROR: 未挑选到可用视频流")
 
     print(f">>> [1/2] {('P'+str(pnum)) if pnum else ''}下载视频流 (max {max_res}p, API直链)...")
     vfile = os.path.join(outdir, f".video_tmp_{pnum}.m4s")
     try:
-        download_to(vurl, vfile)
-    except Exception:
+        download_stream(v, vfile, "视频流")
+    except Exception as e:
         os.remove(vfile) if os.path.exists(vfile) else None
-        sys.exit("ERROR: 视频流下载失败")
+        sys.exit(f"ERROR: 视频流下载失败 ({exc_brief(e)})")
 
     print(f">>> [2/2] {('P'+str(pnum)) if pnum else ''}下载音频流...")
     afile = os.path.join(outdir, f".audio_tmp_{pnum}.m4s")
     try:
-        download_to(aurl, afile)
-    except Exception:
+        download_stream(auds[0], afile, "音频流")
+    except Exception as e:
         os.remove(vfile) if os.path.exists(vfile) else None
         os.remove(afile) if os.path.exists(afile) else None
-        sys.exit("ERROR: 音频流下载失败")
+        sys.exit(f"ERROR: 音频流下载失败 ({exc_brief(e)})")
 
     out = os.path.join(outdir, f"{title}.{container}")
     if pnum:
@@ -1079,7 +1113,13 @@ def main(argv):
         print("\n已取消", file=sys.stderr)
         return 130
     except SystemExit as e:
-        return e.code if isinstance(e.code, int) else 1
+        # sys.exit("...") 的消息只在 SystemExit 冒泡到顶层时才会打印;
+        # 这里必须自己打印, 否则所有 ERROR/用法提示都变成静默的 rc=1。
+        if isinstance(e.code, int):
+            return e.code
+        if e.code is not None:
+            print(e.code, file=sys.stderr)
+        return 1
     return 0
 
 

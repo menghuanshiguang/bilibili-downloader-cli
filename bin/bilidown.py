@@ -879,7 +879,7 @@ def download_video(bv, pnum, outdir, ck, container="mp4", max_res=480, cut=None,
             if avc:
                 vfile2 = os.path.join(outdir, f".video_tmp_{pnum}_avc.m4s")
                 try:
-                    download_to(avc[0]["baseUrl"], vfile2)
+                    download_stream(avc[0], vfile2, "avc视频流")
                     print("    ✅ 拿到 avc 流, 直接合并 (免转码)...")
                     ok = run_ffmpeg([ffmpeg, "-y"] + cut1[:2] + ["-i", vfile2] + cut1[2:]
                                     + ["-i", afile] + cutout + ["-map", "0:v:0", "-map", "1:a:0",

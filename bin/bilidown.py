@@ -731,10 +731,10 @@ def download_stream(entry, dest, label):
             n = download_to(url, dest)
         except Exception as e:
             tried.append(f"{host} -> {exc_brief(e)}")
-            log(f">>> ⚠️ {label} 直链失败: {host} ({exc_brief(e)}), 尝试备用源...")
+            print(f">>> ⚠️ {label} 直链失败: {host} ({exc_brief(e)}), 尝试备用源...")
             continue
         if tried:
-            log(f">>> {label} 备用源可用: {host} ({n / 1048576:.1f}M)")
+            print(f">>> {label} 备用源可用: {host} ({n / 1048576:.1f}M)")
         return n
     if not tried:
         raise RuntimeError(f"{label}: API 未返回任何直链")
